@@ -1,0 +1,5 @@
+{
+  "finance":   { "group_id": 123 },
+  "stream_ops":{ "group_id": 456 },
+  "support":   { "group_id": 789 }
+}
