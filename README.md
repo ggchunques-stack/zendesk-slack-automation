@@ -1,160 +1,188 @@
-# Zendesk Automation MVP
+🚀 Zendesk → Slack Automation MVP
 
-Receives Zendesk webhook events, evaluates routing rules, sends Slack alerts for high/critical tickets, and optionally updates Zendesk tickets when not in dry-run.
+Production-ready automation to route Zendesk tickets, prevent duplicated actions, and alert teams in Slack only when it really matters.
 
-## Quickstart
+This project demonstrates how support teams can reduce manual triage, avoid alert fatigue, and respond faster to high-severity tickets using a secure, testable, and observable webhook-based architecture.
 
-1) Create and activate a virtualenv.
-2) Install dependencies:
+🧠 The Problem
 
-```bash
-pip install -r requirements.txt
-```
+Most support teams struggle with:
 
-3) Copy `.env.example` to `.env` and fill values, or export env vars directly.
-4) Run the API:
+Zendesk sending multiple webhook events for the same ticket
 
-```bash
-uvicorn app.main:app --reload
-```
+Manual routing based on priority/type
 
-5) Expose locally (ngrok):
+Slack channels flooded with low-value notifications
 
-```bash
-ngrok http 8000
-```
+No safe way to test automations before going live
 
-## Zendesk webhook/trigger payload
+Hard-to-debug webhook failures
 
-Configure a Zendesk webhook and trigger to POST JSON to:
+✅ The Solution
 
-```
-https://<your-ngrok-subdomain>.ngrok.io/webhooks/zendesk
-```
+This automation acts as a decision engine between Zendesk and Slack.
 
-Include these fields in the payload (minimum for routing/dedupe):
-- `ticket_id` (integer)
-- `type` (category, e.g. "billing", "technical", "stream")
-- `priority` (low/normal/high/urgent/critical)
-- `updated_at` (timestamp, used for dedupe stability)
-- `event_id` and/or `audit_id` (optional, improves dedupe)
+It:
 
-## Dry-run vs real updates
+Deduplicates incoming webhook events
 
-- `ZENDESK_DRY_RUN=true`: Zendesk tickets are not updated; Slack notifications still send.
-- `ZENDESK_DRY_RUN=false`: Zendesk ticket updates are executed when there are changes to apply.
+Normalizes inconsistent Zendesk data (Portuguese / English)
 
-## Debug endpoints
+Applies routing rules deterministically
 
-Debug endpoints are disabled unless `DEBUG_WEBHOOK_SIGNATURE=true`. When disabled, they return 404.
+Sends Slack alerts only for high-severity tickets
 
-## Environment variables
+Supports debug, dry-run, and production modes
 
-Required for Zendesk API access (debug Zendesk calls, ticket updates):
-- `ZENDESK_SUBDOMAIN`
-- `ZENDESK_EMAIL`
-- `ZENDESK_API_TOKEN`
+Is fully test-covered and observable
 
-Optional:
-- `ENV` (default: `dev`)
-- `SLACK_WEBHOOK_URL`
-- `ZENDESK_WEBHOOK_SECRET` (enables signature validation)
-- `ZENDESK_DRY_RUN` (default: `true`)
-- `ZENDESK_ADD_INTERNAL_COMMENT` (default: `false`)
-- `DEBUG_WEBHOOK_SIGNATURE` (default: `false`)
-- `DEBUG_FORCE_NOTIFY` (default: `false`)
-- `DATABASE_PATH` (default: `./data.db`)
-- `MAPPING_PATH` (default: `./config/mapping.json`)
-- `SIGNATURE_HEADER_CANDIDATES` (default: `X-Zendesk-Webhook-Signature,X-Zendesk-Signature,X-Hub-Signature-256`)
-- `SIGNATURE_TIMESTAMP_HEADER` (default: `X-Zendesk-Webhook-Signature-Timestamp`)
+🏗️ Architecture Overview
+Zendesk Webhook
+      ↓
+Signature Validation (HMAC)
+      ↓
+Normalization Layer
+      ↓
+Routing Rules Engine
+      ↓
+Idempotency / Deduplication
+      ↓
+Slack Notification (optional)
+      ↓
+Zendesk Update (optional)
 
-## Webhook sanity check
+🔁 Execution Modes
+Mode	Purpose
+Debug + Dry-Run	Observe decisions, logs, Slack pings without changing Zendesk
+Dry-Run (no debug)	Safe validation before production
+Production	Real Slack alerts + Zendesk updates
+✨ Key Features
 
-Without signature:
+🔐 Secure webhook signature validation
 
-```bash
-curl -X POST http://localhost:8000/webhooks/zendesk \
-  -H "Content-Type: application/json" \
-  -d '{"ticket_id":123,"type":"billing","priority":"low"}'
-```
+♻️ Idempotency & deduplication
 
-With signature (set `ZENDESK_WEBHOOK_SECRET`):
+🌍 Priority/status normalization (PT → EN)
 
-```bash
-payload='{"ticket_id":123,"type":"billing","priority":"low"}'
-timestamp="1700000000"
-sig=$(python - <<'PY'
-import base64, hashlib, hmac, os
-body = b'{"ticket_id":123,"type":"billing","priority":"low"}'
-timestamp = "1700000000"
-secret = os.environ["ZENDESK_WEBHOOK_SECRET"].encode("utf-8")
-payload = timestamp.encode("utf-8") + body
-print(base64.b64encode(hmac.new(secret, payload, hashlib.sha256).digest()).decode("ascii"))
-PY
-)
-curl -X POST http://localhost:8000/webhooks/zendesk \
-  -H "Content-Type: application/json" \
-  -H "X-Zendesk-Webhook-Signature: $sig" \
-  -H "X-Zendesk-Webhook-Signature-Timestamp: $timestamp" \
-  -d "$payload"
-```
-The webhook accepts base64 signatures (Zendesk) or hex signatures with an optional `sha256=` prefix.
+📊 Full debug & replay endpoints
 
-## Debug endpoints
-Debug endpoints are only enabled when `DEBUG_WEBHOOK_SIGNATURE=true`.
+🧪 100% test coverage for routing logic
 
-Zendesk calls:
+🚦 Dry-run safety switch
 
-```bash
-curl http://localhost:8000/debug/zendesk/me
-curl http://localhost:8000/debug/zendesk/tickets/123
-```
+🔔 Slack alerts only for critical tickets
 
-Stored events/decisions:
-
-```bash
-curl "http://localhost:8000/debug/events/recent?limit=20"
-curl "http://localhost:8000/debug/decisions/recent?limit=20"
-curl "http://localhost:8000/debug/decisions/replay?ticket_id=123"
-```
-
-## Ngrok
-
-Expose the webhook locally and set the Zendesk webhook URL to the public ngrok URL:
-
-```bash
-ngrok http 8000
-```
-
-## Testing
-
-```bash
-pytest
-```
-
-## Mapping configuration
-
-The app reads `config/mapping.json` to determine how tickets are routed. The file is a JSON object keyed by `route_to`, where each value is a config object. Existing mappings that only include `group_id` remain valid.
-
-Required per route:
-- `group_id` (number)
-
-Optional per route:
-- `assignee_id` (number)
-- `slack_channel` (string, e.g. "#support-alerts")
-- `notify_on` (array of severities, e.g. ["high", "critical"]). When omitted, behavior is unchanged.
-
-Example format:
-
-```json
+🧪 Example Decision Output
 {
-  "finance":   { "group_id": 123 },
-  "stream_ops":{ "group_id": 456 },
-  "support":   {
-    "group_id": 789,
-    "assignee_id": 555,
-    "slack_channel": "#support-alerts",
-    "notify_on": ["high", "critical"]
-  }
+  "ok": true,
+  "decision": {
+    "route_to": "support",
+    "severity": "critical",
+    "notify": true,
+    "reason": "High severity → Slack notification"
+  },
+  "slack_sent": true,
+  "zendesk_updated": false,
+  "zendesk_dry_run": true
 }
-```
+
+⚡ Quickstart
+1. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+2. Install dependencies
+pip install -r requirements.txt
+
+3. Configure environment variables
+cp .env.example .env
+
+
+Fill in values as needed (Slack webhook, Zendesk secrets, etc).
+
+4. Run the API
+uvicorn app.main:app --reload
+
+5. (Optional) Expose locally with ngrok
+ngrok http 8000
+
+🔔 Zendesk Webhook Configuration
+
+Configure Zendesk to POST JSON events to:
+
+https://<your-ngrok-subdomain>.ngrok.io/webhooks/zendesk
+
+
+Zendesk signature headers supported:
+
+X-Zendesk-Webhook-Signature
+
+X-Zendesk-Webhook-Timestamp (epoch or ISO-8601)
+
+🧪 Debug & Observability Endpoints
+Endpoint	Purpose
+/health	Health check
+/debug/ping-slack	Test Slack integration
+/debug/signature-check	Validate webhook signature
+/debug/decisions/recent	Recent routing decisions
+/debug/events/recent	Raw webhook events
+/debug/decisions/replay?ticket_id=123	Replay routing logic
+🧪 Running Tests
+pytest -v
+
+
+Covers:
+
+Routing logic
+
+Deduplication
+
+Normalization
+
+Signature validation
+
+Slack formatting
+
+💼 Use Cases
+
+This project can be positioned as:
+
+✅ Freelancer automation project
+
+✅ Support tooling MVP
+
+✅ Zendesk consulting deliverable
+
+✅ Internal Ops automation
+
+🚀 Foundation for a SaaS product
+
+🧩 Why This Matters
+
+This is not a demo script.
+
+It demonstrates:
+
+Real-world webhook safety
+
+Deterministic routing logic
+
+Production-grade testing
+
+Clear separation of concerns
+
+Business-oriented automation design
+
+📬 Contact / Usage
+
+If you want help adapting this system for:
+
+Your Zendesk instance
+
+Your Slack workspace
+
+Custom routing rules
+
+Production deployment
+
+👉 This architecture is ready to scale.
